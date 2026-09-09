@@ -1,0 +1,32 @@
+name: DSE Daily Quant Pipeline
+
+on:
+  schedule:
+    # বাংলাদেশ সময় বিকেল ৩:১৫ (রবি থেকে বৃহস্পতিবার)
+    - cron: '15 9 * * 0-4'
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run DSE Engine
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python dse_engine.py
+          

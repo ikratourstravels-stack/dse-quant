@@ -7,7 +7,7 @@ from io import StringIO
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-def send_telegram_alert(message):
+def send_telegram_alert(message: str):
     if not BOT_TOKEN or not CHAT_ID:
         print("Telegram secrets missing!")
         return
@@ -22,92 +22,60 @@ def send_telegram_alert(message):
     except Exception as e:
         print(f"Failed to send alert: {e}")
 
-def run_dse_engine():
-    today = datetime.now().strftime("%Y-%m-%d")
-    print("Fetching DSE Market Data...")
+def run_pipeline():
+    today = datetime.now()
+    day_of_week = today.weekday()  # 4 = Friday, 5 = Saturday
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    # শুক্র ও শনিবার মার্কেট বন্ধ থাকলে আগেই নিরাপদ বার্তা পাঠাবে
+    if day_of_week in [4, 5]:
+        msg = f"ℹ️ *DSE মার্কেট আপডেট*\n\nআজ মার্কেট বন্ধ (সাপ্তাহিক ছুটি)।\nআগামী রবিবার সকাল ১০:০০ টা থেকে পাইপলাইন নিয়মিত ডেটা ট্র্যাক করবে।"
+        print("Market closed for weekend.")
+        send_telegram_alert(msg)
+        return
+
     url = "https://www.dsebd.org/latest_share_price_scroll_l.php"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": "https://www.dsebd.org/"
+    }
 
     try:
-        response = requests.get(url, headers=headers, timeout=20)
-        if response.status_code != 200:
-            send_telegram_alert(f"⚠️ *DSE ডেটা ফেচ ব্যর্থ: Status {response.status_code}*")
-            return
+        response = requests.get(url, headers=headers, timeout=25)
+        response.raise_for_status()
 
         tables = pd.read_html(StringIO(response.text))
-        target_table = None
-        for tbl in tables:
-            tbl_str = str(tbl.columns)
-            if "Trading Code" in tbl_str or "LTP" in tbl_str:
-                target_table = tbl
-                break
-
-        if target_table is None:
-            send_telegram_alert("⚠️ *DSE ডেটা টেবিল ফরম্যাট পরিবর্তন হয়েছে।*")
+        if not tables:
+            send_telegram_alert("⚠️ DSE পেজে কোনো ডেটা টেবিল পাওয়া যায়নি।")
             return
 
-        df = target_table.copy()
-        df.columns = [str(c).strip() for c in df.columns]
+        df = tables[0]
+        # কলামের সংখ্যা যাচাই ও রিনেম
+        if df.shape[1] >= 9:
+            df = df.iloc[:, :9]
+            df.columns = ["TRADING_CODE", "LTP", "HIGH", "LOW", "CLOSEP", "YCP", "CHANGE", "TRADE", "VALUE"]
 
-        col_map = {}
-        for c in df.columns:
-            if "Trading Code" in c:
-                col_map[c] = "CODE"
-            elif "LTP" in c:
-                col_map[c] = "LTP"
-            elif "High" in c:
-                col_map[c] = "HIGH"
-            elif "Low" in c:
-                col_map[c] = "LOW"
-            elif "Close" in c or "YCP" in c:
-                col_map[c] = "YCP"
-            elif "Change" in c:
-                col_map[c] = "CHANGE"
-            elif "Value" in c:
-                col_map[c] = "VALUE"
-            elif "Volume" in c:
-                col_map[c] = "VOLUME"
+            # ডেটা ক্লিনিং
+            df["LTP"] = pd.to_numeric(df["LTP"].astype(str).str.replace(',', ''), errors='coerce')
+            df["CHANGE"] = pd.to_numeric(df["CHANGE"].astype(str).str.replace(',', ''), errors='coerce')
+            df["VALUE"] = pd.to_numeric(df["VALUE"].astype(str).str.replace(',', ''), errors='coerce')
 
-        df = df.rename(columns=col_map)
-        
-        for num_col in ["LTP", "CHANGE", "VALUE", "VOLUME"]:
-            if num_col in df.columns:
-                df[num_col] = pd.to_numeric(df[num_col].astype(str).str.replace(",", ""), errors="coerce")
+            top_gainers = df.sort_values(by="CHANGE", ascending=False).dropna(subset=["CHANGE"]).head(5)
+            
+            report = f"📊 *DSE Daily Market Summary*\nতারিখ: {today.strftime('%d-%m-%Y')}\n\n*Top 5 Gainers:*\n"
+            for _, row in top_gainers.iterrows():
+                report += f"• `{row['TRADING_CODE']}`: {row['LTP']} ({row['CHANGE']:+} TK)\n"
 
-        df = df.dropna(subset=["CODE", "LTP"])
-
-        top_gainers = df.sort_values(by="CHANGE", ascending=False).head(5)
-        top_losers = df.sort_values(by="CHANGE", ascending=True).head(5)
-        top_value = df.sort_values(by="VALUE", ascending=False).head(5) if "VALUE" in df.columns else None
-
-        msg = f"📊 *DSE Daily Market Summary*\n📅 তারিখ: `{today}`\n"
-        msg += "━━━━━━━━━━━━━━━━━━\n"
-
-        msg += "\n🔥 *Top Gainers:*\n"
-        for _, r in top_gainers.iterrows():
-            msg += f"• `{r['CODE']}`: {r['LTP']} ({r['CHANGE']:+})\n"
-
-        msg += "\n📉 *Top Losers:*\n"
-        for _, r in top_losers.iterrows():
-            msg += f"• `{r['CODE']}`: {r['LTP']} ({r['CHANGE']:+})\n"
-
-        if top_value is not None:
-            msg += "\n💰 *Top Turnover (Value):*\n"
-            for _, r in top_value.iterrows():
-                msg += f"• `{r['CODE']}`: {r['VALUE']:.1f} mn\n"
-
-        msg += "\n━━━━━━━━━━━━━━━━━━\n🤖 _Automated by DSE Quant Engine_"
-
-        send_telegram_alert(msg)
-        print("Market summary sent successfully!")
+            send_telegram_alert(report)
+            print("Summary sent successfully.")
+        else:
+            send_telegram_alert("⚠️ DSE ডেটা ফরম্যাটে পরিবর্তন এসেছে।")
 
     except Exception as e:
-        send_telegram_alert(f"⚠️ *ইঞ্জিন রান করতে সমস্যা হয়েছে:* `{str(e)[:100]}`")
+        err_msg = f"⚠️ *ইঞ্জিন রান করতে সমস্যা হয়েছে:*\n`{str(e)[:150]}`"
+        send_telegram_alert(err_msg)
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    run_dse_engine()
-    
+    run_pipeline()

@@ -1,2 +1,6 @@
 pandas
 requests 
+numpy
+urllib3
+lxml
+html5lib

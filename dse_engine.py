@@ -1,4 +1,4 @@
-  import os
+import os
 import requests
 import pandas as pd
 import numpy as np
@@ -43,7 +43,6 @@ def run_pipeline():
             
         df = tables[0]
         
-        # DSE স্ক্রল পেজের স্ট্যান্ডার্ড ১০টি কলাম পার্সিং
         if df.shape[1] >= 10:
             df = df.iloc[:, 1:10]
             df.columns = ['Ticker', 'LTP', 'High', 'Low', 'Close', 'YCP', 'Change', 'Trade', 'Value_mn']
@@ -54,32 +53,22 @@ def run_pipeline():
             send_telegram_alert("⚠️ DSE টেবিল ফরম্যাট পরিবর্তন হয়েছে।")
             return
 
-        # নিউমেরিক কনভার্সন
         for c in ['High', 'Low', 'Close', 'LTP', 'Value_mn']:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '').str.strip(), errors='coerce')
         
-        # Close ফাঁকা থাকলে LTP বসানোর ব্যাকআপ লজিক
         df['Close'] = df['Close'].fillna(df['LTP'])
         df['Close'] = np.where(df['Close'] <= 0, df['LTP'], df['Close'])
         
-        # মিসিং বা ইনভ্যালিড রো বাদ দেওয়া
         df = df.dropna(subset=['Close', 'High', 'Low', 'Value_mn'])
         df = df[(df['High'] > 0) & (df['Low'] > 0) & (df['Close'] > 0)]
         
-        # কোয়ান্ট মেট্রিক হিসাব
         hl_diff = df['High'] - df['Low']
         df['CLV'] = np.where(hl_diff > 0, ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / hl_diff, 0.0)
         df['Turnover_Cr'] = df['Value_mn'] / 10.0
         df['Spread_%'] = np.where(df['Low'] > 0, (hl_diff / df['Low']) * 100, 0.0)
         
-        # --- অপ্টিমাইজড DSE কোয়ান্ট ফিল্টার (V2.2) ---
-        # ইঞ্জিন ১: মোমেন্টাম ব্রেকআউট (TO >= 1.0 Cr, CLV >= +0.60)
         e1 = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] >= 0.60)].sort_values(by='Turnover_Cr', ascending=False).head(5)
-        
-        # ইঞ্জিন ২: বটম অ্যাকুমুলেশন (TO >= 0.4 Cr, CLV >= +0.25, Spread <= 7.5%)
         e2 = df[(df['Turnover_Cr'] >= 0.4) & (df['CLV'] >= 0.25) & (df['Spread_%'] <= 7.5)].sort_values(by='Turnover_Cr', ascending=False).head(5)
-        
-        # ট্র্যাপ ফিল্টার: টার্নওভার বড় কিন্তু উইক ক্লোজিং (TO >= 2.0 Cr, CLV < 0.25)
         traps = df[(df['Turnover_Cr'] >= 2.0) & (df['CLV'] < 0.25)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         
         msg = f"📊 *DSE QUANT ALERT* ({datetime.now().strftime('%d-%b-%Y')})\n\n"
@@ -113,4 +102,4 @@ def run_pipeline():
 
 if __name__ == "__main__":
     run_pipeline()
-        
+  

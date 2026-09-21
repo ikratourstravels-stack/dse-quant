@@ -2,7 +2,7 @@ import os
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from io import StringIO
 import urllib3
 
@@ -41,18 +41,29 @@ def run_pipeline():
             send_telegram_alert("⚠️ DSE ডেটা পেজ পাওয়া যায়নি।")
             return
             
-        df = tables[0]
-        
-        if df.shape[1] >= 10:
-            df = df.iloc[:, 1:10]
-            df.columns = ['Ticker', 'LTP', 'High', 'Low', 'Close', 'YCP', 'Change', 'Trade', 'Value_mn']
-        elif df.shape[1] >= 9:
-            df = df.iloc[:, 0:9]
-            df.columns = ['Ticker', 'LTP', 'High', 'Low', 'Close', 'YCP', 'Change', 'Trade', 'Value_mn']
-        else:
-            send_telegram_alert("⚠️ DSE টেবিল ফরম্যাট পরিবর্তন হয়েছে।")
+        # সঠিক ডেটা টেবিল নির্বাচন (যেটিতে শেয়ারের তালিকা থাকে)
+        df = None
+        for t in tables:
+            if t.shape[1] >= 8 and len(t) > 10:
+                df = t
+                break
+                
+        if df is None:
+            send_telegram_alert("⚠️ DSE শেয়ার টেবিল শনাক্ত করা যায়নি।")
             return
 
+        # কলাম বিন্যাস
+        if df.shape[1] >= 10:
+            df = df.iloc[:, 1:10]
+        elif df.shape[1] == 9:
+            df = df.iloc[:, 0:9]
+            
+        df.columns = ['Ticker', 'LTP', 'High', 'Low', 'Close', 'YCP', 'Change', 'Trade', 'Value_mn']
+
+        # অপ্রয়োজনীয় হেডার লাইন বাদ দেওয়া
+        df = df[df['Ticker'].astype(str).str.upper() != 'TRADING CODE']
+
+        # সংখ্যা রূপান্তর
         for c in ['High', 'Low', 'Close', 'LTP', 'Value_mn']:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '').str.strip(), errors='coerce')
         
@@ -60,22 +71,27 @@ def run_pipeline():
         df['Close'] = np.where(df['Close'] <= 0, df['LTP'], df['Close'])
         
         df = df.dropna(subset=['Close', 'High', 'Low', 'Value_mn'])
-        df = df[(df['High'] > 0) & (df['Low'] > 0) & (df['Close'] > 0)]
+        df = df[(df['High'] > 0) & (df['Low'] > 0)]
         
+        # কোয়ান্ট হিসাব
         hl_diff = df['High'] - df['Low']
         df['CLV'] = np.where(hl_diff > 0, ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / hl_diff, 0.0)
         df['Turnover_Cr'] = df['Value_mn'] / 10.0
         df['Spread_%'] = np.where(df['Low'] > 0, (hl_diff / df['Low']) * 100, 0.0)
         
-        # ডাটা ডায়াগনস্টিক ট্র্যাকার
         total_scraped = len(df)
         max_to = df['Turnover_Cr'].max() if not df.empty else 0.0
         
-        e1 = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] >= 0.60)].sort_values(by='Turnover_Cr', ascending=False).head(5)
-        e2 = df[(df['Turnover_Cr'] >= 0.4) & (df['CLV'] >= 0.25) & (df['Spread_%'] <= 7.5)].sort_values(by='Turnover_Cr', ascending=False).head(5)
-        traps = df[(df['Turnover_Cr'] >= 2.0) & (df['CLV'] < 0.25)].sort_values(by='Turnover_Cr', ascending=False).head(5)
+        # ফিল্টারিং
+        e1 = df[(df['Turnover_Cr'] >= 0.5) & (df['CLV'] >= 0.50)].sort_values(by='Turnover_Cr', ascending=False).head(5)
+        e2 = df[(df['Turnover_Cr'] >= 0.2) & (df['CLV'] >= 0.20) & (df['Spread_%'] <= 8.0)].sort_values(by='Turnover_Cr', ascending=False).head(5)
+        traps = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] < 0.20)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         
-        msg = f"📊 *DSE QUANT ALERT* ({datetime.now().strftime('%d-%b-%Y %I:%M %p')})\n"
+        # বাংলাদেশ সময় নির্ধারণ (UTC+6)
+        bd_now = datetime.now(timezone.utc) + timedelta(hours=6)
+        now_bd = bd_now.strftime('%d-%b-%Y %I:%M %p')
+        
+        msg = f"📊 *DSE QUANT ALERT* ({now_bd})\n"
         msg += f"🔍 মোট স্ক্যান করা স্টক: {total_scraped} টি\n"
         msg += f"💰 আজকের সর্বোচ্চ লেনদেন: {max_to:.2f} Cr\n\n"
         
@@ -108,3 +124,4 @@ def run_pipeline():
 
 if __name__ == "__main__":
     run_pipeline()
+        

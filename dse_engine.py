@@ -1,4 +1,4 @@
-import os
+  import os
 import requests
 import pandas as pd
 import numpy as np
@@ -29,7 +29,7 @@ def send_telegram_alert(message: str):
 def run_pipeline():
     target_url = "https://www.dsebd.org/latest_share_price_scroll_l.php"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
     
     try:
@@ -43,18 +43,28 @@ def run_pipeline():
             
         df = tables[0]
         
-        # কলামের নামের বদলে অবস্থান (Index) দিয়ে ডেটা নেওয়া
-        if df.shape[1] >= 9:
+        # DSE স্ক্রল পেজের স্ট্যান্ডার্ড ১০টি কলাম পার্সিং
+        if df.shape[1] >= 10:
             df = df.iloc[:, 1:10]
             df.columns = ['Ticker', 'LTP', 'High', 'Low', 'Close', 'YCP', 'Change', 'Trade', 'Value_mn']
+        elif df.shape[1] >= 9:
+            df = df.iloc[:, 0:9]
+            df.columns = ['Ticker', 'LTP', 'High', 'Low', 'Close', 'YCP', 'Change', 'Trade', 'Value_mn']
         else:
-            send_telegram_alert("⚠️ DSE টেবিল পাওয়া যায়নি।")
+            send_telegram_alert("⚠️ DSE টেবিল ফরম্যাট পরিবর্তন হয়েছে।")
             return
 
+        # নিউমেরিক কনভার্সন
         for c in ['High', 'Low', 'Close', 'LTP', 'Value_mn']:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '').str.strip(), errors='coerce')
         
+        # Close ফাঁকা থাকলে LTP বসানোর ব্যাকআপ লজিক
+        df['Close'] = df['Close'].fillna(df['LTP'])
+        df['Close'] = np.where(df['Close'] <= 0, df['LTP'], df['Close'])
+        
+        # মিসিং বা ইনভ্যালিড রো বাদ দেওয়া
         df = df.dropna(subset=['Close', 'High', 'Low', 'Value_mn'])
+        df = df[(df['High'] > 0) & (df['Low'] > 0) & (df['Close'] > 0)]
         
         # কোয়ান্ট মেট্রিক হিসাব
         hl_diff = df['High'] - df['Low']
@@ -62,10 +72,15 @@ def run_pipeline():
         df['Turnover_Cr'] = df['Value_mn'] / 10.0
         df['Spread_%'] = np.where(df['Low'] > 0, (hl_diff / df['Low']) * 100, 0.0)
         
-        # ফিল্টার
-        e1 = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] >= 0.70)].head(5)
-        e2 = df[(df['Turnover_Cr'] >= 0.5) & (df['CLV'] >= 0.40) & (df['Spread_%'] <= 5.0)].head(5)
-        traps = df[(df['Turnover_Cr'] >= 2.0) & (df['CLV'] < 0.30)].head(5)
+        # --- অপ্টিমাইজড DSE কোয়ান্ট ফিল্টার (V2.2) ---
+        # ইঞ্জিন ১: মোমেন্টাম ব্রেকআউট (TO >= 1.0 Cr, CLV >= +0.60)
+        e1 = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] >= 0.60)].sort_values(by='Turnover_Cr', ascending=False).head(5)
+        
+        # ইঞ্জিন ২: বটম অ্যাকুমুলেশন (TO >= 0.4 Cr, CLV >= +0.25, Spread <= 7.5%)
+        e2 = df[(df['Turnover_Cr'] >= 0.4) & (df['CLV'] >= 0.25) & (df['Spread_%'] <= 7.5)].sort_values(by='Turnover_Cr', ascending=False).head(5)
+        
+        # ট্র্যাপ ফিল্টার: টার্নওভার বড় কিন্তু উইক ক্লোজিং (TO >= 2.0 Cr, CLV < 0.25)
+        traps = df[(df['Turnover_Cr'] >= 2.0) & (df['CLV'] < 0.25)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         
         msg = f"📊 *DSE QUANT ALERT* ({datetime.now().strftime('%d-%b-%Y')})\n\n"
         
@@ -86,7 +101,7 @@ def run_pipeline():
         msg += "\n⚠️ *OPERATOR TRAP / DUMP*\n"
         if not traps.empty:
             for _, r in traps.iterrows():
-                msg += f"• *{r['Ticker']}* | Cls: {r['Close']} | CLV: {r['CLV']:.2f} (Weak Close)\n"
+                msg += f"• *{r['Ticker']}* | Cls: {r['Close']} | TO: {r['Turnover_Cr']:.1f}Cr | CLV: {r['CLV']:.2f} (Weak Close)\n"
                 
         send_telegram_alert(msg)
         print("Alert sent successfully!")
@@ -98,4 +113,4 @@ def run_pipeline():
 
 if __name__ == "__main__":
     run_pipeline()
-                
+        

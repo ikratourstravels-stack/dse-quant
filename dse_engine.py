@@ -67,11 +67,17 @@ def run_pipeline():
         df['Turnover_Cr'] = df['Value_mn'] / 10.0
         df['Spread_%'] = np.where(df['Low'] > 0, (hl_diff / df['Low']) * 100, 0.0)
         
+        # ডাটা ডায়াগনস্টিক ট্র্যাকার
+        total_scraped = len(df)
+        max_to = df['Turnover_Cr'].max() if not df.empty else 0.0
+        
         e1 = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] >= 0.60)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         e2 = df[(df['Turnover_Cr'] >= 0.4) & (df['CLV'] >= 0.25) & (df['Spread_%'] <= 7.5)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         traps = df[(df['Turnover_Cr'] >= 2.0) & (df['CLV'] < 0.25)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         
-        msg = f"📊 *DSE QUANT ALERT* ({datetime.now().strftime('%d-%b-%Y')})\n\n"
+        msg = f"📊 *DSE QUANT ALERT* ({datetime.now().strftime('%d-%b-%Y %I:%M %p')})\n"
+        msg += f"🔍 মোট স্ক্যান করা স্টক: {total_scraped} টি\n"
+        msg += f"💰 আজকের সর্বোচ্চ লেনদেন: {max_to:.2f} Cr\n\n"
         
         msg += "🚀 *MOMENTUM CANDIDATES*\n"
         if not e1.empty:
@@ -102,4 +108,3 @@ def run_pipeline():
 
 if __name__ == "__main__":
     run_pipeline()
-  

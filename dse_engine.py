@@ -27,19 +27,36 @@ def send_telegram_alert(message: str):
         print(f"Failed to send alert: {e}")
 
 def run_pipeline():
-    # ডিএসইর সঠিক এবং আপডেট করা এন্ডপয়েন্ট ইউআরএল
-    target_url = "https://www.dsebd.org/latest_share_price_scroll.php"
+    # ডিএসইর আপডেট করা মূল শেয়ার প্রাইস পেজ এন্ডপয়েন্ট
+    target_urls = [
+        "https://www.dsebd.org/latest_share_price.php",
+        "https://www.dsebd.org/share_price_stock_list.php"
+    ]
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
     }
     
+    response = None
+    for target_url in target_urls:
+        try:
+            res = requests.get(target_url, headers=headers, verify=False, timeout=25)
+            if res.status_code == 200:
+                response = res
+                break
+        except Exception as e:
+            print(f"URL {target_url} failed: {e}")
+            continue
+            
+    if response is None:
+        send_telegram_alert("⚠️ DSE সার্ভার থেকে ডেটা ফেচ করা সম্ভব হয়নি (Connection Failed)।")
+        return
+    
     try:
-        response = requests.get(target_url, headers=headers, verify=False, timeout=25)
-        response.raise_for_status()
-        
         tables = pd.read_html(StringIO(response.text))
         if not tables:
-            send_telegram_alert("⚠️ DSE ডেটা পেজ পাওয়া যায়নি।")
+            send_telegram_alert("⚠️ DSE ডেটা পেজে কোনো টেবিল পাওয়া যায়নি।")
             return
             
         # সঠিক ডেটা টেবিল নির্বাচন (যেটিতে শেয়ারের তালিকা থাকে)
@@ -125,4 +142,3 @@ def run_pipeline():
 
 if __name__ == "__main__":
     run_pipeline()
-        

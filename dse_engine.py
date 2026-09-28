@@ -27,9 +27,10 @@ def send_telegram_alert(message: str):
         print(f"Failed to send alert: {e}")
 
 def run_pipeline():
-    target_url = "https://www.dsebd.org/latest_share_price_scroll_l.php"
+    # ডিএসইর সঠিক এবং আপডেট করা এন্ডপয়েন্ট ইউআরএল
+    target_url = "https://www.dsebd.org/latest_share_price_scroll.php"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
     try:
@@ -52,7 +53,7 @@ def run_pipeline():
             send_telegram_alert("⚠️ DSE শেয়ার টেবিল শনাক্ত করা যায়নি।")
             return
 
-        # কলাম বিন্যাস
+        # কলাম বিন্যাস ও ডেটা ক্লিনিং
         if df.shape[1] >= 10:
             df = df.iloc[:, 1:10]
         elif df.shape[1] == 9:
@@ -73,7 +74,7 @@ def run_pipeline():
         df = df.dropna(subset=['Close', 'High', 'Low', 'Value_mn'])
         df = df[(df['High'] > 0) & (df['Low'] > 0)]
         
-        # কোয়ান্ট হিসাব
+        # কোয়ান্ট হিসাব (CLV, Turnover, Spread)
         hl_diff = df['High'] - df['Low']
         df['CLV'] = np.where(hl_diff > 0, ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / hl_diff, 0.0)
         df['Turnover_Cr'] = df['Value_mn'] / 10.0
@@ -82,7 +83,7 @@ def run_pipeline():
         total_scraped = len(df)
         max_to = df['Turnover_Cr'].max() if not df.empty else 0.0
         
-        # ফিল্টারিং
+        # ফিল্টারিং ইঞ্জিন ১ ও ২
         e1 = df[(df['Turnover_Cr'] >= 0.5) & (df['CLV'] >= 0.50)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         e2 = df[(df['Turnover_Cr'] >= 0.2) & (df['CLV'] >= 0.20) & (df['Spread_%'] <= 8.0)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         traps = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] < 0.20)].sort_values(by='Turnover_Cr', ascending=False).head(5)

@@ -27,7 +27,6 @@ def send_telegram_alert(message: str):
         print(f"Failed to send alert: {e}")
 
 def run_pipeline():
-    # ডিএসইর আপডেট করা মূল শেয়ার প্রাইস পেজ এন্ডপয়েন্ট
     target_urls = [
         "https://www.dsebd.org/latest_share_price.php",
         "https://www.dsebd.org/share_price_stock_list.php"
@@ -59,7 +58,6 @@ def run_pipeline():
             send_telegram_alert("⚠️ DSE ডেটা পেজে কোনো টেবিল পাওয়া যায়নি।")
             return
             
-        # সঠিক ডেটা টেবিল নির্বাচন (যেটিতে শেয়ারের তালিকা থাকে)
         df = None
         for t in tables:
             if t.shape[1] >= 8 and len(t) > 10:
@@ -70,7 +68,6 @@ def run_pipeline():
             send_telegram_alert("⚠️ DSE শেয়ার টেবিল শনাক্ত করা যায়নি।")
             return
 
-        # কলাম বিন্যাস ও ডেটা ক্লিনিং
         if df.shape[1] >= 10:
             df = df.iloc[:, 1:10]
         elif df.shape[1] == 9:
@@ -78,10 +75,8 @@ def run_pipeline():
             
         df.columns = ['Ticker', 'LTP', 'High', 'Low', 'Close', 'YCP', 'Change', 'Trade', 'Value_mn']
 
-        # অপ্রয়োজনীয় হেডার লাইন বাদ দেওয়া
         df = df[df['Ticker'].astype(str).str.upper() != 'TRADING CODE']
 
-        # সংখ্যা রূপান্তর
         for c in ['High', 'Low', 'Close', 'LTP', 'Value_mn']:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '').str.strip(), errors='coerce')
         
@@ -91,7 +86,6 @@ def run_pipeline():
         df = df.dropna(subset=['Close', 'High', 'Low', 'Value_mn'])
         df = df[(df['High'] > 0) & (df['Low'] > 0)]
         
-        # কোয়ান্ট হিসাব (CLV, Turnover, Spread)
         hl_diff = df['High'] - df['Low']
         df['CLV'] = np.where(hl_diff > 0, ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / hl_diff, 0.0)
         df['Turnover_Cr'] = df['Value_mn'] / 10.0
@@ -100,12 +94,10 @@ def run_pipeline():
         total_scraped = len(df)
         max_to = df['Turnover_Cr'].max() if not df.empty else 0.0
         
-        # ফিল্টারিং ইঞ্জিন ১ ও ২
         e1 = df[(df['Turnover_Cr'] >= 0.5) & (df['CLV'] >= 0.50)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         e2 = df[(df['Turnover_Cr'] >= 0.2) & (df['CLV'] >= 0.20) & (df['Spread_%'] <= 8.0)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         traps = df[(df['Turnover_Cr'] >= 1.0) & (df['CLV'] < 0.20)].sort_values(by='Turnover_Cr', ascending=False).head(5)
         
-        # বাংলাদেশ সময় নির্ধারণ (UTC+6)
         bd_now = datetime.now(timezone.utc) + timedelta(hours=6)
         now_bd = bd_now.strftime('%d-%b-%Y %I:%M %p')
         
